@@ -2,6 +2,11 @@ package com.pm.whatsappclone.message;
 
 import com.pm.whatsappclone.chat.Chat;
 import com.pm.whatsappclone.chat.ChatRepository;
+import com.pm.whatsappclone.file.FileService;
+import com.pm.whatsappclone.file.FileUtils;
+import com.pm.whatsappclone.notification.Notification;
+import com.pm.whatsappclone.notification.NotificationService;
+import com.pm.whatsappclone.notification.NotificationType;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -10,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -19,10 +23,12 @@ public class MessageService {
     private final MessageRepository messageRepository;
     private final ChatRepository chatRepository;
     private final MessageMapper mapper;
+    private final FileService fileService;
+    private final NotificationService notificationService;
 
-    public void save(MessageRequest messageReq){
+    public void saveMessage(MessageRequest messageReq){
         Chat chat = chatRepository.findById(messageReq.getChatId())
-                .orElseThrow(() -> new EntityNotFoundException("Chat not found with id: " + messageReq.getChatId()));
+                .orElseThrow(() -> new EntityNotFoundException("Chat not found with id : " + messageReq.getChatId()));
 
         Message message = new Message();
         message.setContent(messageReq.getContent());
@@ -34,7 +40,18 @@ public class MessageService {
 
         messageRepository.save(message);
 
-        // todo // notify the recipient about the new message
+        // send notification to the recipient
+        Notification notification = Notification.builder()
+                .chatId(chat.getId())
+                .messageType(message.getType())
+                .content(message.getContent())
+                .senderId(message.getSenderId())
+                .receiverId(message.getReceiverId())
+                .type(NotificationType.MESSAGE)
+                .chatName(chat.getChatName(message.getSenderId()))
+                .build();
+
+        notificationService.sendNotification(message.getReceiverId(), notification);
 
     }
 
@@ -53,7 +70,15 @@ public class MessageService {
 
         messageRepository.setMessagesToSeenByChatId(chatId, MessageState.SEEN);
         
-        //todo notify the sender that the messages have been seen
+        // notify the sender that the messages have been seen
+        Notification notification = Notification.builder()
+                .chatId(chat.getId())
+                .senderId(getSenderId(chat, authentication))
+                .receiverId(recipientId)
+                .type(NotificationType.SEEN)
+                .build();
+
+        notificationService.sendNotification(recipientId, notification);
 
     }
     
@@ -65,6 +90,27 @@ public class MessageService {
         final String recipientId = getRecipientId(chat, authentication);
 
         final String filePath = fileService.saveFile(file, sendId);
+
+        Message message = new Message();
+        message.setChat(chat);
+        message.setSenderId(sendId);
+        message.setReceiverId(recipientId);
+        message.setType(MessageType.IMAGE);
+        message.setState(MessageState.SEEN);
+        message.setFileUrl(filePath);
+        messageRepository.save(message);
+
+        // notify the recipient about the new media message
+        Notification notification = Notification.builder()
+                .chatId(chat.getId())
+                .type(NotificationType.IMAGE)
+                .messageType(MessageType.IMAGE)
+                .senderId(sendId)
+                .receiverId(recipientId)
+                .image(FileUtils.readFileFromLocation(filePath))
+                .build();
+
+        notificationService.sendNotification(recipientId, notification);
     }
 
     private String getSenderId(Chat chat, Authentication authentication) {

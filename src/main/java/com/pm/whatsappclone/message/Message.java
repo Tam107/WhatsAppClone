@@ -43,5 +43,7 @@ public class Message extends BaseAuditingEntity {
     @JoinColumn(name = "chat_id")
     private Chat chat;
 
+    @Column(name = "file_url")
+    private String fileUrl;
 
 }
